@@ -1,0 +1,702 @@
+---
+title: "5205_Project"
+output: html_document
+---
+# libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tm)
+library(tidytext)
+library(wordcloud)
+library(RColorBrewer)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(syuzhet)
+library(sentimentr)
+library(caret)
+```
+
+
+```{r}
+setwd('~/Documents/Applied Analytics Frameworks & Methods II/Group Project/')
+data = read.csv('TED_Talk.csv')
+```
+
+# Look at the data
+```{r}
+str(data)
+```
+
+# Before cleaing data we have 52 varibles
+
+## Look at the duplicate rows
+
+```{r}
+sum(duplicated(data))
+```
+
+## Missing values
+
+```{r}
+colSums(is.na(data))
+p = function(x) {sum(is.na(x))/length(x)*100}
+apply(data,2,p)
+#comment_count, speaker__id,speaker__is_published,has_talk_citation,external__duration,talks__player_talks__resources__h264__00__bitrate,external__start_time
+colSums(is.na(data))
+p = function(x) {sum(is.na(x))/length(x)*100}
+apply(data,2,p)
+#comment_count, speaker__id,speaker__is_published,has_talk_citation,external__duration,talks__player_talks__resources__h264__00__bitrate,external__start_time
+colSums(is.na(data))
+p = function(x) {sum(is.na(x))/length(x)*100}
+#apply(data,2,p)
+#comment_count, speaker__id,speaker__is_published,has_talk_citation,external__duration,talks__player_talks__resources__h264__00__bitrate,external__start_time
+```
+
+## no meanning  and NA(speaker__id,speaker__is_published,has_talk_citation, talks__player_talks__resources__h264__00__bitrate)
+```{r}
+data = data[ , 
+             -which(names(data) %in% c("speaker__id",
+                                      "speaker__what_others_say","all_speakers_details","has_talk_citation","language_swap","is_subtitle_required",
+                                       "url__webpage", "url__audio", "url__video", "url__photo__talk","url__photo__speaker", "url__subtitled_videos",
+                                       "talk__download_languages","talk__more_resources",
+                                       "number_of__talk__recommendations", "related_talks", "number_of__related_talks",
+                                       "talks__player_talks__resources__h264__00__bitrate", "talks__take_action", "number_of__talks__take_actions",
+                                       "number_of__talk__more_resources", "talk__recommendations",
+                                      "speaker__is_published", "talk__recommendations__blurb",
+                                      "external__start_time","external__duration"
+                                       ))]
+
+
+```
+
+#observations all eng no mening   
+```{r}
+summary(data$language)
+summary(data$native_language)
+data = data[,!names(data) %in% c("native_language")]
+
+sapply(data, function(x) sum(is.na(x)))
+```
+
+
+
+
+#comment_count
+```{r}
+
+summary(data$comment_count)
+data$comment_count[is.na(data$comment_count)] = mean(data$comment_count)
+
+## After removing row with null value, we still have 25 varibles.
+```
+
+
+# Feature engineering
+```{r}
+## Number of words in title
+data$title_word_count = sapply(strsplit(data$talk__name, " "), length)
+
+## Number of words in description
+data$description_word_count = sapply(strsplit(data$talk__description, " "), length)
+
+## Total number of words in transcript
+data$transcript_word_count = sapply(strsplit(data$transcript, " "), length)
+
+## Words per second of Ted Talks
+data$words_per_second <- data$transcript_word_count/data$duration
+
+## Date when the dataset was published on Kaggle
+dataset_published = as.Date('2017-09-21')
+
+## Number of says since dataset was published in Kaggle
+data$days_since_posted <-
+as.numeric(difftime(dataset_published,strptime(data$published_timestamp, format="%Y-%m-%d", tz="UTC"), units = "days"))
+
+## Views per day of Ted Talk until the day the dataset was published on Kaggle
+data$views_per_day <- data$view_count/data$days_since_posted
+
+
+data$talks__tags <- gsub("[\r\n]", "", data$talks__tags)
+data$talks__tags <- gsub("[[:punct:]]", "", data$talks__tags)
+
+data <- cbind(data, get_nrc_sentiment(data$talks__tags))
+
+
+summary(data$title_word_count)
+
+
+```
+
+```{r}
+summary(data$description_word_count)
+ggplot(data, aes(x=description_word_count)) + geom_histogram(binwidth=.5)
+```
+
+```{r}
+summary(data$transcript_word_count)
+ggplot(data, aes(transcript_word_count)) + geom_density()
+```
+
+```{r}
+summary(data$words_per_second)
+ggplot(data, aes(x=words_per_second)) + geom_density()
+```
+
+```{r}
+summary(data$view_count)
+ggplot(data, aes(x=view_count)) + geom_density()
+```
+```{r}
+summary(data$comment_count)
+ggplot(data, aes(x=comment_count)) + geom_density()
+```
+
+
+# NLP WORK BEGIN 
+
+# Preparing data for sentiment analysis
+```{r}
+
+data$talk__name  <-  gsub("[\r\n]", "", data$talk__name)
+data$talk__name  <-  gsub("[[:punct:]]", "", data$talk__name)
+
+
+data$talk__description <-  gsub("[\r\n]", "", data$talk__description)
+data$talk__description <-  gsub("[[:punct:]]", "", data$talk__description)
+
+
+data$transcript <- gsub("[\r\n]", "", data$transcript)
+data$transcript <- gsub("[[:punct:]]", "", data$transcript)
+
+
+```
+
+# Descriptive NLP for titles
+
+## Bar chart for top 15 most frequently used words
+```{r}
+titles <- data %>%
+  select(talk__name) %>%
+  unnest_tokens(word, talk__name)
+
+titles <- titles %>%
+  anti_join(stop_words)
+
+titles %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Count",
+       x = "Unique words",
+       title = "Most frequent words found in the AAPI tweets",
+       subtitle = "Stop words removed from the list")
+
+```
+
+## Word Cloud
+```{r}
+wordcloud(titles$word, min.freq=20, scale=c(3.5, .5), random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+## NRC sentiments
+```{r}
+titles <- iconv(titles, from="UTF-8", to="ASCII", sub="")
+
+nrc_sentiment_titles<-get_nrc_sentiment((titles))
+sentimentscores_titles<-data.frame(colSums(nrc_sentiment_titles[,]))
+names(sentimentscores_titles) <- "Score"
+sentimentscores_titles <- cbind("sentiment"=rownames(sentimentscores_titles),sentimentscores_titles)
+rownames(sentimentscores_titles) <- NULL
+
+ggplot(data=sentimentscores_titles,aes(x=sentiment,y=Score))+
+  geom_bar(aes(fill=sentiment),stat = "identity")+
+  theme(legend.position="none")+
+  xlab("Sentiments")+ylab("Scores")+
+  ggtitle("Total sentiment based on scores")+
+  theme_minimal()
+```
+# Descriptive NLP for descriptions 
+
+## Bar chart for top 15 most frequently used words
+```{r}
+descriptions <- data %>%
+  select(talk__description) %>%
+  unnest_tokens(word, talk__description)
+
+descriptions <- descriptions %>%
+  anti_join(stop_words)
+
+descriptions %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Count",
+       x = "Unique words",
+       title = "Most frequent words found in the Ted talk transcripts",
+       subtitle = "Stop words removed from the list")
+
+```
+
+# Word cloud
+```{r}
+wordcloud(descriptions$word, min.freq=100, scale=c(3.5, .5), random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+# NRC Sentiment
+```{r}
+descriptions <- iconv(descriptions, from="UTF-8", to="ASCII", sub="")
+
+nrc_sentiment_descriptions <-get_nrc_sentiment((descriptions))
+sentimentscores_descriptions <-data.frame(colSums(nrc_sentiment_descriptions[,]))
+names(sentimentscores_descriptions) <- "Score"
+sentimentscores_descriptions <- cbind("sentiment"=rownames(sentimentscores_descriptions),sentimentscores_descriptions)
+rownames(sentimentscores_descriptions) <- NULL
+
+ggplot(data=sentimentscores_descriptions,aes(x=sentiment,y=Score))+
+  geom_bar(aes(fill=sentiment),stat = "identity")+
+  theme(legend.position="none")+
+  xlab("Sentiments")+ylab("Scores")+
+  ggtitle("Total sentiment based on scores")+
+  theme_minimal()
+```
+
+
+# Descriptive NLP for Transcripts 
+
+## Bar chart for top 15 most frequently used words
+```{r}
+transcripts <- data %>%
+  select(transcript) %>%
+  unnest_tokens(word, transcript)
+
+transcripts <- transcripts %>%
+  anti_join(stop_words)
+
+transcripts %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Count",
+       x = "Unique words",
+       title = "Most frequent words found in the Ted talk transcripts",
+       subtitle = "Stop words removed from the list")
+```
+
+## Word Cloud
+```{r}
+wordcloud(transcripts$word, min.freq=2000, scale=c(3.5, .5), random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
+# Do Not Run, converting descriptions to ASCII takes FOREVER
+```{r}
+#transcripts <- iconv(transcripts, from="UTF-8", to="ASCII", sub="")
+
+#nrc_sentiment_transcripts <-get_nrc_sentiment((transcripts))
+#sentimentscores_transcripts <-data.frame(colSums(nrc_sentiment_transcripts[,]))
+#names(sentimentscores_transcripts) <- "Score"
+#sentimentscores_transcripts <- cbind("sentiment"=rownames(sentimentscores),sentimentscores)
+#rownames(sentimentscores_transcripts) <- NULL
+
+#ggplot(data=sentimentscores_transcripts,aes(x=sentiment,y=Score))+
+#  geom_bar(aes(fill=sentiment),stat = "identity")+
+#  theme(legend.position="none")+
+#  xlab("Sentiments")+ylab("Scores")+
+#  ggtitle("Total sentiment based on scores")+
+#  theme_minimal()
+```
+
+# Descriptive NLP for Speaker Titles/Description
+
+## Bar chart for top 15 most frequently used words in speaker description
+```{r}
+views_by_speaker_title <- data %>%
+  group_by(speaker__description) %>%
+  summarize(mean_views = mean(view_count))
+
+views_by_speaker_title 
+```
+
+## Word Cloud
+```{r}
+speaker_desription <- data %>%
+  select(speaker__description) %>%
+  unnest_tokens(word, speaker__description)
+
+speaker_desription <- speaker_desription %>%
+  anti_join(stop_words)
+```
+
+# Most common speaker titles
+```{r}
+speaker_desription %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Count",
+       x = "Unique words",
+       title = "Most common speaker titles",
+       subtitle = "Stop words removed from the list")
+```
+
+# Any ideas on how we can clean up speaker__description?
+
+```{r}
+
+tags <- data %>%
+  select(talks__tags) %>%
+  unnest_tokens(word, talks__tags)
+
+tags <- tags %>%
+  anti_join(stop_words)
+
+tags %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Count",
+       x = "Unique words",
+       title = "Most common tags",
+       subtitle = "Stop words removed from the list")
+
+```
+
+# Word cloud
+```{r}
+wordcloud(tags$word, min.freq=200, scale=c(3.5, .5), random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+# NRC Sentiment
+```{r}
+tags <- iconv(tags, from="UTF-8", to="ASCII", sub="")
+
+nrc_sentiment_tags <-get_nrc_sentiment((tags))
+sentimentscores_tags <-data.frame(colSums(nrc_sentiment_tags[,]))
+names(sentimentscores_tags) <- "Score"
+sentimentscores_tags <- cbind("sentiment"=rownames(sentimentscores_tags),sentimentscores_tags)
+rownames(sentimentscores_tags) <- NULL
+
+ggplot(data=sentimentscores_tags,aes(x=sentiment,y=Score))+
+  geom_bar(aes(fill=sentiment),stat = "identity")+
+  theme(legend.position="none")+
+  xlab("Sentiments")+ylab("Scores")+
+  ggtitle("Total sentiment based on tags")+
+  theme_minimal()
+```
+
+# NLP WORK END
+
+]
+
+# MODELING WORK BEGIN
+# SPLIT DATA
+```{r}
+set.seed(1031)
+split = createDataPartition(y=data$views_per_day,p = 0.7,list = F,groups = 100)
+train = data[split,]
+test = data[-split,]
+```
+
+# PREDICTING VIEW COUNTS
+# BACKWARD STEPWISE SELECTION (USING SUBSET OF RELEVANT DATA)
+```{r}
+start_mod = lm(view_count~duration+number_of__speakers+is_talk_featured+factor(language)+number_of__subtitled_videos+number_of__talk__download_languages+intro_duration+title_word_count+description_word_count+transcript_word_count+words_per_second+anger+anticipation+disgust+fear+joy+sadness+surprise+trust+negative+positive,data=train)
+empty_mod = lm(view_count~1,data=train)
+full_mod = lm(view_count~duration+number_of__speakers+is_talk_featured+factor(language)+number_of__subtitled_videos+number_of__talk__download_languages+intro_duration+title_word_count+description_word_count+transcript_word_count+words_per_second+anger+anticipation+disgust+fear+joy+sadness+surprise+trust+negative+positive,data=train)
+backwardStepwise = step(start_mod,
+                        scope=list(upper=full_mod,lower=empty_mod),
+                        direction='backward')
+```
+
+# LINEAR MODEL
+```{r}
+# Linear model 
+model1 = lm(view_count ~ duration + number_of__subtitled_videos + number_of__talk__download_languages + 
+    intro_duration + title_word_count + description_word_count + 
+    transcript_word_count + words_per_second + joy + sadness + 
+    surprise, train)
+
+
+
+summary(model1)
+
+pred1 = predict(model1, newdata = test)
+rmse1 = sqrt(mean((pred1-test$view_count)^2)); rmse1
+```
+
+# DECISION TREE 
+
+```{r}
+library(rpart); library(rpart.plot)
+model2 <- rpart(view_count ~ duration + number_of__subtitled_videos + number_of__talk__download_languages + 
+    intro_duration + title_word_count + description_word_count + 
+    transcript_word_count + words_per_second + joy + sadness + 
+    surprise, train)
+
+rpart.plot(model2)
+pred2 = predict(model2, newdata = test)
+rmse2 = sqrt(mean((pred2-test$view_count)^2)); rmse2
+```
+# BOOSTED TREE
+
+```{r}
+library('gbm')
+model3 = gbm(view_count ~ duration + number_of__subtitled_videos + number_of__talk__download_languages + 
+    intro_duration + title_word_count + description_word_count + 
+    transcript_word_count + joy + sadness + 
+    surprise, data = train)
+
+pred3 = predict(model3, newdata = test)
+rmse3 = sqrt(mean((pred3-test$view_count)^2)); rmse3
+```
+
+# TF IDF of description
+```{r}
+library(tm); library(SnowballC); library(magrittr)
+corpus1 = Corpus(VectorSource(data$talk__description))
+corpus1 = 
+  corpus1%>%
+  tm_map(content_transformer(tolower))%>%
+  tm_map(content_transformer(FUN = function(x)gsub(pattern = 'http[[:alnum:][:punct:]]*', replacement = ' ',x = x)))%>%
+  tm_map(removePunctuation)%>%
+  tm_map(removeWords, c(stopwords('english'),'ted','talk'))
+
+dict1 = findFreqTerms(DocumentTermMatrix(Corpus(VectorSource(data$talk__description))),lowfreq = 0)
+dict_corpus1 = Corpus(VectorSource(dict1))
+
+corpus1 = 
+  corpus1 %>%
+  tm_map(stemDocument)%>%
+  tm_map(stripWhitespace)
+
+dtm1 = DocumentTermMatrix(corpus1)
+xdtm1 = removeSparseTerms(dtm1,sparse = 0.95)
+xdtm1 = as.data.frame(as.matrix(xdtm1))
+colnames(xdtm1) = stemCompletion(x = colnames(xdtm1),dictionary = dict_corpus1,type = 'prevalent')
+colnames(xdtm1) = make.names(colnames(xdtm1))
+
+xdtm1 <- xdtm1[, !duplicated(colnames(xdtm1))]
+
+sort(colSums(xdtm1),decreasing = T)[1:50]
+```
+
+```{r}
+dtm_tfidf1 = DocumentTermMatrix(x=corpus1,
+                               control = list(weighting=function(x) weightTfIdf(x,normalize=F)))
+xdtm_tfidf1 = removeSparseTerms(dtm_tfidf1,sparse = 0.95)
+xdtm_tfidf1 = as.data.frame(as.matrix(xdtm_tfidf1))
+colnames(xdtm_tfidf1) = stemCompletion(x = colnames(xdtm_tfidf1),
+                                      dictionary = dict_corpus1,
+                                      type='prevalent')
+colnames(xdtm_tfidf1) = make.names(colnames(xdtm_tfidf1))
+xdtm_tfidf1 <- xdtm_tfidf1[, !duplicated(colnames(xdtm_tfidf1))]
+sort(colSums(xdtm_tfidf1),decreasing = T)[1:55]
+```
+# BINDING TFIDF WITH SELECTED FEATURES
+```{r}
+data_xdtm1 = cbind(comment_count = data$view_count, duration = data$duration, is_talk_featured = factor(data$is_talk_featured), number_of_subtitled_videos = data$number_of__subtitled_videos, number_of_talk_download_languages = data$number_of__talk__download_languages, intro_duration = data$intro_duration, title_word_count = data$title_word_count, description_word_count = data$description_word_count, transcript_word_count = data$transcript_word_count, words_per_second = data$words_per_second, fear = data$fear, sadness = data$sadness, surprise = data$surprise,xdtm1)
+data_tfidf1 = cbind(comment_count = data$view_count, duration = data$duration, is_talk_featured = factor(data$is_talk_featured), number_of_subtitled_videos = data$number_of__subtitled_videos, number_of_talk_download_languages = data$number_of__talk__download_languages, intro_duration = data$intro_duration, title_word_count = data$title_word_count, description_word_count = data$description_word_count, transcript_word_count = data$transcript_word_count, words_per_second = data$words_per_second, fear = data$fear, sadness = data$sadness, surprise = data$surprise,xdtm_tfidf1)
+
+```
+
+#SPLIT TFIDF DATA
+```{r}
+set.seed(617)
+split = sample(1:nrow(data_tfidf1),size = 0.7*nrow(data))
+train_tfidf1 = data_tfidf1[split,]
+test_tfidf1 = data_tfidf1[-split,]
+train_tfidf1 <- train_tfidf1[, !duplicated(colnames(train_tfidf1))]
+test_tfidf1 <- test_tfidf1[, !duplicated(colnames(test_tfidf1))]
+
+```
+
+# TREE MODEL (TFIDF)
+```{r}
+library(rpart); library(rpart.plot)
+model4 = rpart(comment_count~.,train_tfidf1)
+rpart.plot(model4)
+```
+
+```{r}
+pred4 = predict(model4,newdata=test_tfidf1)
+rmse4 = sqrt(mean((pred4 - test_tfidf1$comment_count)^2)); rmse4
+```
+
+# LINEAR MODEL (TFIDF)
+```{r}
+model5 = lm(comment_count~.,train_tfidf1)
+summary(model5)
+```
+
+```{r}
+pred5 = predict(model5, newdata=test_tfidf1)
+rmse5 = sqrt(mean((pred5 - test_tfidf1$comment_count)^2)); rmse5
+```
+
+# BOOSTED TREE (TFIDF)
+```{r}
+model6 = gbm(comment_count~., data = train_tfidf1)
+pred6 = predict(model6,newdata=test_tfidf1)
+rmse6 = sqrt(mean((pred6 - test_tfidf1$comment_count)^2)); rmse6
+```
+
+
+# PREDICTING COMMENT COUNTS
+# BACKWARD STEPWISE SELECTION (USING SUBSET OF RELEVANT DATA)
+```{r}
+start_mod = lm(comment_count~duration+number_of__speakers+is_talk_featured+factor(language)+number_of__subtitled_videos+number_of__talk__download_languages+intro_duration+title_word_count+description_word_count+transcript_word_count+words_per_second+anger+anticipation+disgust+fear+joy+sadness+surprise+trust+negative+positive,data=train)
+empty_mod = lm(comment_count~1,data=train)
+full_mod = lm(comment_count~duration+number_of__speakers+is_talk_featured+factor(language)+number_of__subtitled_videos+number_of__talk__download_languages+intro_duration+title_word_count+description_word_count+transcript_word_count+words_per_second+anger+anticipation+disgust+fear+joy+sadness+surprise+trust+negative+positive,data=train)
+backwardStepwise = step(start_mod,
+                        scope=list(upper=full_mod,lower=empty_mod),
+                        direction='backward')
+```
+# LINEAR MODEL
+```{r}
+model7 <- lm(comment_count ~ duration + factor(is_talk_featured) + number_of__subtitled_videos + 
+    number_of__talk__download_languages + intro_duration + title_word_count + 
+    description_word_count + transcript_word_count + words_per_second + 
+    fear + sadness + surprise, data = train)
+
+summary(model7)
+pred7 = predict(model7, newdata = test)
+rmse7 = sqrt(mean((pred7-test$comment_count)^2)); rmse7
+```
+# DECISION TREE
+```{r}
+model8 <- rpart(comment_count ~ duration + factor(is_talk_featured) + number_of__subtitled_videos + 
+    number_of__talk__download_languages + intro_duration + title_word_count + 
+    description_word_count + transcript_word_count + words_per_second + 
+    fear + sadness + surprise, data = train)
+
+rpart.plot(model8)
+pred8 = predict(model8, newdata = test)
+rmse8 = sqrt(mean((pred8-test$comment_count)^2)); rmse8
+```
+# BOOSTED TREE
+```{r}
+model9 = gbm(comment_count ~ duration + factor(is_talk_featured) + number_of__subtitled_videos + 
+    number_of__talk__download_languages + intro_duration + title_word_count + 
+    description_word_count + transcript_word_count + words_per_second + 
+    fear + sadness + surprise, data = train)
+
+pred9 = predict(model9, newdata = test)
+rmse9 = sqrt(mean((pred9-test$comment_count)^2)); rmse9
+```
+
+
+# TFIDF OF TRANSCRIPT 
+```{r}
+library(tm); library(SnowballC); library(magrittr)
+corpus = Corpus(VectorSource(data$transcript))
+corpus = 
+  corpus%>%
+  tm_map(content_transformer(tolower))%>%
+  tm_map(content_transformer(FUN = function(x)gsub(pattern = 'http[[:alnum:][:punct:]]*', replacement = ' ',x = x)))%>%
+  tm_map(removePunctuation)%>%
+  tm_map(removeWords, c(stopwords('english'),'ted','talk'))
+
+dict = findFreqTerms(DocumentTermMatrix(Corpus(VectorSource(data$transcript))),lowfreq = 0)
+dict_corpus = Corpus(VectorSource(dict))
+
+corpus = 
+  corpus %>%
+  tm_map(stemDocument)%>%
+  tm_map(stripWhitespace)
+
+dtm = DocumentTermMatrix(corpus)
+xdtm = removeSparseTerms(dtm,sparse = 0.95)
+xdtm = as.data.frame(as.matrix(xdtm))
+colnames(xdtm) = stemCompletion(x = colnames(xdtm),dictionary = dict_corpus,type = 'prevalent')
+colnames(xdtm) = make.names(colnames(xdtm))
+
+xdtm <- xdtm[, !duplicated(colnames(xdtm))]
+
+sort(colSums(xdtm),decreasing = T)[1:50]
+```
+
+```{r}
+dtm_tfidf = DocumentTermMatrix(x=corpus,
+                               control = list(weighting=function(x) weightTfIdf(x,normalize=F)))
+xdtm_tfidf = removeSparseTerms(dtm_tfidf,sparse = 0.95)
+xdtm_tfidf = as.data.frame(as.matrix(xdtm_tfidf))
+colnames(xdtm_tfidf) = stemCompletion(x = colnames(xdtm_tfidf),
+                                      dictionary = dict_corpus,
+                                      type='prevalent')
+colnames(xdtm_tfidf) = make.names(colnames(xdtm_tfidf))
+xdtm_tfidf <- xdtm_tfidf[, !duplicated(colnames(xdtm_tfidf))]
+sort(colSums(xdtm_tfidf),decreasing = T)[1:55]
+```
+# BINDING TFIDF WITH SELECTED FEATURES
+```{r}
+data_xdtm = cbind(comment_count = data$comment_count, duration = data$duration, is_talk_featured = factor(data$is_talk_featured), number_of_subtitled_videos = data$number_of__subtitled_videos, number_of_talk_download_languages = data$number_of__talk__download_languages, intro_duration = data$intro_duration, title_word_count = data$title_word_count, description_word_count = data$description_word_count, transcript_word_count = data$transcript_word_count, words_per_second = data$words_per_second, fear = data$fear, sadness = data$sadness, surprise = data$surprise,xdtm)
+data_tfidf = cbind(comment_count = data$comment_count, duration = data$duration, is_talk_featured = factor(data$is_talk_featured), number_of_subtitled_videos = data$number_of__subtitled_videos, number_of_talk_download_languages = data$number_of__talk__download_languages, intro_duration = data$intro_duration, title_word_count = data$title_word_count, description_word_count = data$description_word_count, transcript_word_count = data$transcript_word_count, words_per_second = data$words_per_second, fear = data$fear, sadness = data$sadness, surprise = data$surprise,xdtm_tfidf)
+
+```
+
+#SPLIT TFIDF DATA
+```{r}
+set.seed(617)
+split = sample(1:nrow(data_tfidf),size = 0.7*nrow(data))
+train_tfidf = data_tfidf[split,]
+test_tfidf = data_tfidf[-split,]
+train_tfidf <- train_tfidf[, !duplicated(colnames(train_tfidf))]
+test_tfidf <- test_tfidf[, !duplicated(colnames(test_tfidf))]
+
+```
+
+# TREE MODEL (TFIDF)
+```{r}
+library(rpart); library(rpart.plot)
+model10 = rpart(comment_count~.,train_tfidf)
+rpart.plot(model10)
+```
+
+```{r}
+pred10 = predict(model10,newdata=test_tfidf)
+rmse10 = sqrt(mean((pred10 - test_tfidf$comment_count)^2)); rmse10
+```
+
+# LINEAR MODEL (TFIDF)
+```{r}
+model11 = lm(comment_count~.,train_tfidf)
+summary(model11)
+```
+
+```{r}
+pred11 = predict(model11, newdata=test_tfidf)
+rmse11 = sqrt(mean((pred11 - test_tfidf$comment_count)^2)); rmse11
+```
+
+# BOOSTED TREE (TFIDF)
+```{r}
+model12 = gbm(comment_count~., data = train_tfidf)
+pred12 = predict(model12,newdata=test_tfidf)
+rmse12 = sqrt(mean((pred12 - test_tfidf$comment_count)^2)); rmse12
+```
